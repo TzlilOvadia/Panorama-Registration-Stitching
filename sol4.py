@@ -106,6 +106,7 @@ def find_features(pyr):
                 2) A feature descriptor array with shape (N,K,K)
     """
 
+    #
     pos = spread_out_corners(pyr[0], 7, 7, 7)
 
     sampleDescriptor = sample_descriptor(pyr[2],pos.astype(np.float64)/4,3) # TODO: modify the pyr[2] coordinate system
@@ -125,15 +126,18 @@ def match_features(desc1, desc2, min_score):
     """
     matched_features1 = []
     matched_features2 = []
+    ## TODO -> fix this function!
+    # s_matrix = np.dot(desc1[],desc2[])
+    # Cond 1: matched_features[j,k] is in the best 2 features that match feature j in image i, from all features in image i + 1
+    # Cond 2: matched_features[j,k] is in the best 2 features that match feature k in image i + 1, from all features in image i.
+    # Cond 3: matched_features[j,k] is greater (>) than some predefined minimal score (called min_score in the following)
 
     for j in range(len(desc1)):
         tmp = zeros(desc1[0].shape[0]**2)
         tmp_idx = [None,None]
         for k in range(len(desc2)):
             dot = np.dot(desc1[j].flat(),desc2[k].flat())
-            # Cond 1: matched_features[j,k] is in the best 2 features that match feature j in image i, from all features in image i + 1
-            # Cond 2: matched_features[j,k] is in the best 2 features that match feature k in image i + 1, from all features in image i.
-            # Cond 3: matched_features[j,k] is greater (>) than some predefined minimal score (called min_score in the following)
+
             if dot >= tmp and dot > min_score:
                 tmp = dot
                 tmp_idx[0] = j
@@ -185,32 +189,33 @@ def ransac_homography(points1, points2, num_iter, inlier_tol, translation_only=F
                 2) An Array with shape (S,) where S is the number of inliers,
                     containing the indices in pos1/pos2 of the maximal set of inlier matches found.
     """
-    # Step 1:Pick a random set of 2 point matches from the supplied N point matches. Let’s denote their indices by J.
-    # We call these two sets of 2 points in the two images P1,J and P2,J:
-    a = np.random.randint(len(points1))
-    b = np.random.randint(len(points1))
-    p1j = points1[a]
-    p2j = points2[b]
+    max_inliers_ind = []
+    point1,point2 = None, None
 
-    # Step 2: Compute the homography H1,2 that transforms the 2 points P1,J to the 2 points P2,J . As discussed in class,
-    # there is a closed form solution for that. To simplify matters you have been provided with the
-    # estimate_rigid_transform function that performs this step. This function returns a 3x3 homography matrix which
-    # performs the rigid transformation.
-    if translation_only:
+
+    for iter in range(num_iter):
+        # Step 1:Pick a random set of 2 point matches from the supplied N point matches. Let’s denote their indices by J.
+        # We call these two sets of 2 points in the two images P1,J and P2,J:
+        p1j = points1[np.random.choice(len(points1)),:]
+        p2j = points2[np.random.choice(len(points2)),:]
+        # Step 2: Compute the homography H1,2 that transforms the 2 points P1,J to the 2 points P2,J . We will use
+        # estimate_rigid_transform function to performs this step. This function returns a 3x3 homography matrix which
+        # performs the rigid transformation:
         H12 = estimate_rigid_transform(points1,points2, translation_only)
-    else:
-        # Step 3: For a camera which is mostly translating (i.e a lot of parallax) it is sometimes better to estimate only
-        # translation with no rotation, use translation only = True in that case. You will only need one pair of points in
-        # each ransac iteration if you estimate only translation.
-        H12 = estimate_rigid_transform(points1[0],points2[0])
+        est_point2 = apply_homography(points1, H12)
+        # Step 3: filter out the points which is smaller than the inlier_tol THRESHOLD, and assign it as the inliers:
+        euclideanDist = euclideanDistance(points2,est_point2)
+        inliers = euclideanDist[euclideanDist < inlier_tol]
 
-    # Step 4: Use H1,2 to transform the set of points P1 in image 1 to the transformed set P2′
-    # (using the above apply_homography) and compute the squared euclidean distance E = ||P ′ − P ||2 for  j = j 2,j 2,j
-    # 0..N − 1. Mark all matches having Ej < inlier_tol as inlier matches and the rest as outlier
-    # matches for some constant threshold inlier_tol.
-    points2_tag = H12 @ points1.T
-    euclideanDist = filter(lambda x: x>inlier_tol,euclideanDistance(points2,points2_tag))
-    return [H12,euclideanDist]
+        # Step 4: check if the current iteration gives a maximal values for the inliers:
+        if len(max_inliers_ind) < len(inliers):
+            max_inliers_ind = np.argwhere(euclideanDist < inlier_tol).reshape(inliers.shape[0])
+            point1 = p1j
+            point2 = p2j
+
+    H12 = estimate_rigid_transform(point1,point2,translation_only)
+    return [H12,max_inliers_ind]
+
 
 def euclideanDistance(points2, points2Tag):
     euclideanDist = np.zeros(len(points2))
@@ -219,6 +224,7 @@ def euclideanDistance(points2, points2Tag):
     return euclideanDist
 
 def plotAssistant(vec_x1, vec_x2, vec_y1, vec_y2, n):
+    """Helper function for plotting the layers of matches between two consecutive frames"""
     for iter in range(n):
         plt.plot([vec_x1[iter:iter+2],vec_x2[iter:iter+2]],[vec_y1[iter:iter+2],vec_y2[iter:iter+2]])
 
@@ -268,6 +274,7 @@ def accumulate_homographies(H_succesive, m):
       where H2m[i] transforms points from coordinate system i to coordinate system m
     """
     pass
+
 
 
 def compute_bounding_box(homography, w, h):
@@ -759,23 +766,3 @@ def pyramid_blending(im1, im2, mask, max_levels, filter_size_im, filter_size_mas
         resImg = laplacian_to_image(L_c, filter_vec, np.ones(max_levels))
 
     return np.clip(resImg,0,1)
-
-if __name__ == '__main__':
-    xy= np.arange(36).reshape((6,6))
-    # print(xy)
-    # x, y = np.meshgrid(np.arange(32), np.arange(32))
-    desc_rad = 3
-    pos = [[1,1],[5,4]]
-    descriptors = np.array((desc_rad*2+1,desc_rad*2+1,len(pos)))
-    for i in range(len(pos)):
-        x = pos[i][0]
-        y = pos[i][1]
-        r1 = np.arange(desc_rad * 2 + 1)
-        print("\n\n\n")
-        r2 = np.arange(desc_rad * 2 + 1)
-        tmp_x = np.ones((desc_rad * 2 + 1, desc_rad * 2 + 1))[r1,:]*np.array(np.arange(x-desc_rad,x+desc_rad+1))
-        tmp_y = np.ones((desc_rad * 2 + 1, desc_rad * 2 + 1))[r2,:]*np.array(np.arange(y-desc_rad,y+desc_rad+1))
-        indices = np.array([tmp_x.T,tmp_y])
-
-        # descriptors[:,:,i] = scipy.ndimage.map_coordinates(xy, indices, order=1)
-        print(scipy.ndimage.map_coordinates(xy, indices, order=2, mode='grid-constant'))
