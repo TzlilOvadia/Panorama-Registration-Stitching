@@ -1,19 +1,8 @@
-from random import random
-
 import numpy as np
 import scipy
 import scipy.signal as signal
 import matplotlib.pyplot as plt
 import skimage
-from numpy import zeros
-
-RGB = 2
-GRAY_SCALE = 1
-RGB_FORMAT = 3
-EVEN_PIXELS = 2
-D_X = np.array([[0.5], [0], [-0.5]]).T
-D_Y = np.array([[0.5], [0], [-0.5]])
-
 from scipy.ndimage.morphology import generate_binary_structure
 from scipy.ndimage.filters import maximum_filter
 from scipy.ndimage import label, center_of_mass
@@ -21,8 +10,18 @@ import shutil
 from imageio import imwrite
 import os as os
 import sol4_utils
-K = 0.04
 
+# ################ #
+# ####CONSTANTS### #
+# ################ #
+
+K = 0.04
+RGB = 2
+GRAY_SCALE = 1
+RGB_FORMAT = 3
+EVEN_PIXELS = 2
+D_X = np.array([[0.5], [0], [-0.5]]).T
+D_Y = np.array([[0.5], [0], [-0.5]])
 
 
 def genMatrix(im_x,im_y):
@@ -108,10 +107,8 @@ def find_features(pyr):
 
     #
     pos = spread_out_corners(pyr[0], 7, 7, 7)
-
-    sampleDescriptor = sample_descriptor(pyr[2],pos.astype(np.float64)/4,3) # TODO: modify the pyr[2] coordinate system
+    sampleDescriptor = sample_descriptor(pyr[2],pos.astype(np.float64)/4,3)
     return [pos,sampleDescriptor]
-
 
 
 def match_features(desc1, desc2, min_score):
@@ -124,29 +121,18 @@ def match_features(desc1, desc2, min_score):
                 1) An array with shape (M,) and dtype int of matching indices in desc1.
                 2) An array with shape (M,) and dtype int of matching indices in desc2.
     """
-    matched_features1 = []
-    matched_features2 = []
-    ## TODO -> fix this function!
-    # s_matrix = np.dot(desc1[],desc2[])
-    # Cond 1: matched_features[j,k] is in the best 2 features that match feature j in image i, from all features in image i + 1
-    # Cond 2: matched_features[j,k] is in the best 2 features that match feature k in image i + 1, from all features in image i.
-    # Cond 3: matched_features[j,k] is greater (>) than some predefined minimal score (called min_score in the following)
-
-    for j in range(len(desc1)):
-        tmp = zeros(desc1[0].shape[0]**2)
-        tmp_idx = [None,None]
-        for k in range(len(desc2)):
-            dot = np.dot(desc1[j].flat(),desc2[k].flat())
-
-            if dot >= tmp and dot > min_score:
-                tmp = dot
-                tmp_idx[0] = j
-                tmp_idx[1] = k
-        matched_features1.append(tmp_idx[0])
-        matched_features2.append(tmp_idx[1])
-    return [matched_features1,matched_features2]
-
-
+    # Generate the product of all matrices in desc1 and desc2:
+    s_matrix = np.zeros((desc1.shape[0], desc2.shape[0]))
+    for i in range(len(desc1)):
+        n = np.arange(desc2.shape[0])
+        s_matrix[i,n] = np.dot(desc1[i,:,:].flatten(), desc2[n,:,:].flatten())
+    # At this point, s_matrix is N1 by N2 matrix, where each k,j coordinate in it represents the dot product between
+    # the D_i,k and D_(i+1),j descriptors. We will now use it to find the 2nd maximal value on each row and column
+    # inorder to find the matched features:
+    max_rows = np.partition(s_matrix[:,np.arange(s_matrix.shape[1])],kth=2)
+    max_cols = np.partition(s_matrix[np.arange(s_matrix.shape[0]),:],kth=2)
+    matched = np.argwhere(s_matrix >= max_rows & s_matrix >= max_cols & s_matrix > min_score)
+    return matched
 
 
 def apply_homography(pos1, H12):
@@ -227,7 +213,7 @@ def plotAssistant(vec_x1, vec_x2, vec_y1, vec_y2, n):
     """Helper function for plotting the layers of matches between two consecutive frames"""
     for iter in range(n):
         plt.plot([vec_x1[iter:iter+2],vec_x2[iter:iter+2]],[vec_y1[iter:iter+2],vec_y2[iter:iter+2]])
-
+    return
 
 def display_matches(im1, im2, points1, points2, inliers):
     """
@@ -244,10 +230,7 @@ def display_matches(im1, im2, points1, points2, inliers):
     # get the inlier matches from each image:
     inliers1,inliers2 = points1[inliers],points2[inliers]
 
-    inliers1_x = inliers1[:,0]
-    inliers1_y = inliers1[:, 1]
-    inliers2_x = inliers2[:,0]
-    inliers2_y = inliers2[:, 1]
+    inliers1_x, inliers1_y, inliers2_x, inliers2_y = _get_Inliers(inliers1, inliers2)
 
     outliers1,outliers2 = points1[np.setdiff1d(np.arange(len(points1)), inliers)],\
                           points2[np.setdiff1d(np.arange(len(points1)), inliers)]
@@ -259,6 +242,14 @@ def display_matches(im1, im2, points1, points2, inliers):
     # Draw the outliers:
     plotAssistant(outliers1[:,0], outliers2[:,0], outliers1[:,1], outliers2[:,1], len(outliers1))
     plt.show()
+
+
+def _get_Inliers(inliers1, inliers2):
+    inliers1_x = inliers1[:, 0]
+    inliers1_y = inliers1[:, 1]
+    inliers2_x = inliers2[:, 0]
+    inliers2_y = inliers2[:, 1]
+    return inliers1_x, inliers1_y, inliers2_x, inliers2_y
 
 
 def accumulate_homographies(H_succesive, m):
@@ -274,8 +265,6 @@ def accumulate_homographies(H_succesive, m):
       where H2m[i] transforms points from coordinate system i to coordinate system m
     """
     pass
-
-
 
 def compute_bounding_box(homography, w, h):
     """
@@ -766,3 +755,7 @@ def pyramid_blending(im1, im2, mask, max_levels, filter_size_im, filter_size_mas
         resImg = laplacian_to_image(L_c, filter_vec, np.ones(max_levels))
 
     return np.clip(resImg,0,1)
+
+if __name__ == '__main__':
+    ## Testing the functions:
+    PanoramicVideoGenerator()
