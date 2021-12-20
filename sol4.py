@@ -120,11 +120,10 @@ def find_features(pyr):
     """
 
     pos = spread_out_corners(pyr[0], 7, 7, 7)
-    sampleDescriptor = sample_descriptor(pyr[2],pos.astype(np.float64)/4,3) # TODO: modify the pyr[2] coordinate system
+    sampleDescriptor = sample_descriptor(pyr[2],pos.astype(np.float64)/4,3)
     return [pos,sampleDescriptor]
 
 
-# TODO -> fix this function
 def match_features(desc1, desc2, min_score):
     """
     Return indices of matching descriptors.
@@ -309,7 +308,7 @@ def accumulate_homographies(H_succesive, m):
 
     return H2m
 
-# Todo
+
 def compute_bounding_box(homography, w, h):
     """
     computes bounding box of warped image under homography, without actually warping the image
@@ -319,9 +318,23 @@ def compute_bounding_box(homography, w, h):
     :return: 2x2 array, where the first row is [x,y] of the top left corner,
      and the second row is the [x,y] of the bottom right corner
     """
-    pass
 
-#TODO
+    # Given an image's width and height, compute its corners:
+    top_r,top_l, bottom_r,bottom_l = [w-1,h-1],[0,h-1],[w-1,0],[0,0]
+    image_boundries = np.array([top_r,top_l,bottom_r,bottom_l])
+
+    # Calculate the transformation for the image's boundries using the homography:
+    xy_homography = apply_homography(image_boundries, homography)
+    x_val,y_vals = xy_homography[:,0], xy_homography[:,1]
+
+    # Find the minimal and maximal values on each axis after applying the homography on it:
+    max_x, max_y, min_x, min_y = np.max(x_val),np.max(y_vals), np.min(x_val), np.min(y_vals)
+
+    # Return the values in the described format:
+    box_corners = [[min_x, min_y],[max_x,max_y]]
+    return np.array(box_corners).astype(np.int)
+
+# Todo
 def warp_channel(image, homography):
     """
     Warps a 2D image with a given homography.
