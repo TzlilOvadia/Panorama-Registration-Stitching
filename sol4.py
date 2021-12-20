@@ -1,11 +1,14 @@
+import time
+
 import numpy as np
 import scipy
 import scipy.signal as signal
 import matplotlib.pyplot as plt
-import skimage
+import skimage.color
+import scipy.ndimage as scimage
 from scipy.ndimage.morphology import generate_binary_structure
 from scipy.ndimage.filters import maximum_filter
-from scipy.ndimage import label, center_of_mass
+from scipy.ndimage import label, center_of_mass, map_coordinates
 import shutil
 from imageio import imwrite
 import os as os
@@ -20,21 +23,33 @@ RGB = 2
 GRAY_SCALE = 1
 RGB_FORMAT = 3
 EVEN_PIXELS = 2
-D_X = np.array([[0.5], [0], [-0.5]]).T
-D_Y = np.array([[0.5], [0], [-0.5]])
+D_X = np.array([1, 0, -1]).reshape(1,3)
+D_Y = D_X.T
 
 
 def genMatrix(im_x,im_y):
-    i_x_blurred = sol4_utils.blur_spatial((im_x ** 2), 3)
-    i_y_blurred = sol4_utils.blur_spatial((im_y ** 2), 3)
-    i_yx_blurred = sol4_utils.blur_spatial((im_x*im_y), 3)
-    m = np.array([[i_x_blurred, i_yx_blurred],[i_yx_blurred,i_y_blurred]])
+    """
+    helper function to generate the matrix which is used to generate the response image R.
+    :param im_x: image derivative with respect to x
+    :param im_y: image derivative with respect to y
+    :return: matrix of the form [[i_x_blurred, i_yx_blurred],[i_yx_blurred, i_y_blurred]]
+    """
+    i_x_blurred = sol4_utils.blur_spatial(im_x*im_x, 3)
+    i_y_blurred = sol4_utils.blur_spatial(im_y*im_y, 3)
+    i_yx_blurred = sol4_utils.blur_spatial(im_x*im_y, 3)
+    m = [[i_x_blurred, i_yx_blurred],[i_yx_blurred, i_y_blurred]]
     return m
 
 def getResponse(mat):
-    det = np.det(mat)
-    trace = np.trace(mat)
+    """
+    helper function to calculate the response of the given matrix, with the formula we saw in class
+    :param mat:
+    :return:
+    """
+    det = mat[0][0]*mat[1][1] - mat[0][1]*mat[1][0]
+    trace = mat[0][0] + mat[1][1]
     return det - K*(trace**2)
+
 
 def harris_corner_detector(im):
     """
@@ -44,21 +59,16 @@ def harris_corner_detector(im):
     :return: An array with shape (N,2), where ret[i,:] are the [x,y] coordinates of the ith corner points.
     """
     # Step 1: Get the Ix and Iy derivatives of the image using the filters [1, 0, −1], [1, 0, −1]T respectively.
-    i_x = signal.convolve2d(im, D_X)
-    i_y = signal.convolve2d(im, D_Y)
+    i_x = scimage.convolve(im, D_X)
+    i_y = scimage.convolve(im, D_Y)
     # Step 2: Blur the images: Ix2 , Iy2 , IxIy. You may use blur_spatial function from sol4_utils.py with kernel_size=3.
     m = genMatrix(i_x, i_y)
-
     # Step 4: Build the response image R using the formula we saw in class
     responseIm = getResponse(m)
-
     # Step 5: Finding R for every pixel results in a response image R. The corners are the local maximum points of R
     res = non_maximum_suppression(responseIm)
-    pos = np.argwhere(res == True)
-    n = np.arange(len(pos))
-    pos[n,:] = pos[n,::-1]
-
-    return pos
+    pos = np.argwhere(res)
+    return np.flip(pos, axis=1)
 
 
 def sample_descriptor(im, pos, desc_rad):
@@ -70,26 +80,30 @@ def sample_descriptor(im, pos, desc_rad):
     :return: A 3D array with shape (N,K,K) containing the ith descriptor at desc[i,:,:].
     """
     # Step 1: Create a patch for each point in pos parameter in radius of desc_rad*2+1
-    descriptors = np.array(len(pos),desc_rad*2+1,desc_rad*2+1)
+    descriptors = np.zeros((len(pos),desc_rad*2+1,desc_rad*2+1))
     for i in range(len(pos)):
         # fetch the corresponding (x,y) for the ith iteration:
         x = pos[i][0]
         y = pos[i][1]
         # Create the size of the patch and the corresponding indices for the patch, relative to the image:
         r1 = np.arange(desc_rad * 2 + 1)
-        tmp_x = np.ones((desc_rad * 2 + 1, desc_rad * 2 + 1))[r1,:]*np.array(np.arange(x-desc_rad,x+desc_rad+1))
-        tmp_y = np.ones((desc_rad * 2 + 1, desc_rad * 2 + 1))[r1,:]*np.array(np.arange(y-desc_rad,y+desc_rad+1))
-        indices = [tmp_x.T,tmp_y]
+        x_pos = (np.ones((desc_rad * 2 + 1, desc_rad * 2 + 1))[r1,:]*np.array(np.arange(x-desc_rad,x+desc_rad+1))).flatten()
+        y_pos = (np.ones((desc_rad * 2 + 1, desc_rad * 2 + 1))[r1,:]*np.array(np.arange(y-desc_rad,y+desc_rad+1))).T.flatten()
+        indices = np.array([ y_pos,x_pos])
         # Using map_coordinates, fetch the patch, when out of boundaries are zeros:
-        descriptors[i,:,:] = scipy.ndimage.map_coordinates(im, indices, order=1).reshape(desc_rad*2+1, desc_rad*2+1)
-
-    descriptors = standartizeDescriptors(descriptors)
+        descriptors[i,:,:] = standartizeDescriptors(map_coordinates(im, indices, order=1,prefilter=False)
+                                                    .reshape(desc_rad*2+1, desc_rad*2+1))
     return descriptors
 
 
 def standartizeDescriptors(descriptors):
+    """
+    given a descriptor, this function will return a normalized version of the descriptor.
+    :param descriptors:
+    :return:
+    """
     enumerator = (descriptors - np.mean(descriptors))
-    denominator = (np.linalg.norm(descriptors - np.mean(descriptors)))
+    denominator = (np.linalg.norm(enumerator))
     if denominator:
         return enumerator/denominator
     return descriptors
@@ -105,12 +119,12 @@ def find_features(pyr):
                 2) A feature descriptor array with shape (N,K,K)
     """
 
-    #
     pos = spread_out_corners(pyr[0], 7, 7, 7)
-    sampleDescriptor = sample_descriptor(pyr[2],pos.astype(np.float64)/4,3)
+    sampleDescriptor = sample_descriptor(pyr[2],pos.astype(np.float64)/4,3) # TODO: modify the pyr[2] coordinate system
     return [pos,sampleDescriptor]
 
 
+# TODO -> fix this function
 def match_features(desc1, desc2, min_score):
     """
     Return indices of matching descriptors.
@@ -122,17 +136,17 @@ def match_features(desc1, desc2, min_score):
                 2) An array with shape (M,) and dtype int of matching indices in desc2.
     """
     # Generate the product of all matrices in desc1 and desc2:
-    s_matrix = np.zeros((desc1.shape[0], desc2.shape[0]))
-    for i in range(len(desc1)):
-        n = np.arange(desc2.shape[0])
-        s_matrix[i,n] = np.dot(desc1[i,:,:].flatten(), desc2[n,:,:].flatten())
+    s_matrix = np.tensordot(desc1,desc2, axes=((1,2),(1,2)))
     # At this point, s_matrix is N1 by N2 matrix, where each k,j coordinate in it represents the dot product between
     # the D_i,k and D_(i+1),j descriptors. We will now use it to find the 2nd maximal value on each row and column
     # inorder to find the matched features:
-    max_rows = np.partition(s_matrix[:,np.arange(s_matrix.shape[1])],kth=2)
-    max_cols = np.partition(s_matrix[np.arange(s_matrix.shape[0]),:],kth=2)
-    matched = np.argwhere(s_matrix >= max_rows & s_matrix >= max_cols & s_matrix > min_score)
+    max_cols = (np.partition(s_matrix,kth=-2,axis=0)[-2,:])[None, :]
+    max_rows = (np.partition(s_matrix,kth=-2, axis=1)[:,-2])[:, None]
+    matched = np.flip(np.argwhere((s_matrix >= max_rows) & (s_matrix >= max_cols) & (s_matrix > min_score)))
+    matched = [matched[:,1], matched[:,0]]
     return matched
+
+
 
 
 def apply_homography(pos1, H12):
@@ -143,22 +157,21 @@ def apply_homography(pos1, H12):
     :return: An array with the same shape as pos1 with [x,y] point coordinates obtained from transforming pos1 using H12.
     """
     points = np.arange(len(pos1))
-    pos1_mod = np.copy(pos1)
     # Step 1: modify the dims of pos1 from (x,y) to (x,y,1):
-    pos1_mod[points].append(1)
+
+    pos1_3d = np.ones((pos1.shape[0],3))
+    pos1_3d[ : ,:-1] = pos1
 
     # Step 2: prepare the output for this function:
-    pos2_temp = np.zeros(pos1.shape[0],pos1.shape[1]+1)
-    pos2 = np.zeros(pos1.shape[0], pos1.shape[1])
+    pos2_temp = np.zeros(pos1_3d.shape)
 
     # Step 3: calculate the trasformation for each (x,y,1) from pos1 to pos2:
-    pos2_temp[points] = H12@pos1[points].T
+    pos2_temp[points] = (H12@pos1_3d[points,:].T).T
 
     # Step 4: recalculate the result of pos2_temp to be (x,y) by dividing the each 3-d point by the z component:
-    pos2[points] = np.array([pos2_temp[points,0]/pos2_temp[points,2], pos2_temp[points,1]/pos2_temp[points,2]])
+    pos2 = np.array([pos2_temp[:,0]/pos2_temp[:,2], pos2_temp[:,1]/pos2_temp[:,2]]).T
 
     return pos2
-
 
 
 
@@ -178,35 +191,52 @@ def ransac_homography(points1, points2, num_iter, inlier_tol, translation_only=F
     max_inliers_ind = []
     point1,point2 = None, None
 
-
     for iter in range(num_iter):
         # Step 1:Pick a random set of 2 point matches from the supplied N point matches. Let’s denote their indices by J.
+        rand_indices = np.random.choice(points1.shape[0], size=2)
         # We call these two sets of 2 points in the two images P1,J and P2,J:
-        p1j = points1[np.random.choice(len(points1)),:]
-        p2j = points2[np.random.choice(len(points2)),:]
+        p1j1 = points1[rand_indices[0]]
+        p1j2 = points1[rand_indices[1]]
+
+        p2j1 = points2[rand_indices[0]]
+        p2j2 = points2[rand_indices[1]]
+        p1j = np.array([p1j1,p1j2])
+        p2j = np.array([p2j1, p2j2])
+
         # Step 2: Compute the homography H1,2 that transforms the 2 points P1,J to the 2 points P2,J . We will use
         # estimate_rigid_transform function to performs this step. This function returns a 3x3 homography matrix which
         # performs the rigid transformation:
-        H12 = estimate_rigid_transform(points1,points2, translation_only)
-        est_point2 = apply_homography(points1, H12)
-        # Step 3: filter out the points which is smaller than the inlier_tol THRESHOLD, and assign it as the inliers:
-        euclideanDist = euclideanDistance(points2,est_point2)
-        inliers = euclideanDist[euclideanDist < inlier_tol]
 
-        # Step 4: check if the current iteration gives a maximal values for the inliers:
-        if len(max_inliers_ind) < len(inliers):
-            max_inliers_ind = np.argwhere(euclideanDist < inlier_tol).reshape(inliers.shape[0])
+        H12 = estimate_rigid_transform(p1j, p2j, translation_only)
+        est_point2 = apply_homography(points1, H12)
+
+        # Step 3: Estimate the distance between the original points2 to the estimated set of points - est_point2:
+        euclideanDist = euclideanDistance(points2,est_point2)
+
+        # Step 4: filter out the points which is smaller than the inlier_tol THRESHOLD, and assign it as the inliers:
+        euclideanDist[euclideanDist < inlier_tol] = 0
+        inliers = np.count_nonzero(euclideanDist == 0)
+        # Step 5: check if the current iteration improved the result for the inliers group:
+        if len(max_inliers_ind) < inliers:
+            # Should update the set of points which maximise the inliers count:
             point1 = p1j
             point2 = p2j
+            index = np.argwhere(euclideanDist == 0)
+            max_inliers_ind = index.reshape(index.shape[0], )
 
     H12 = estimate_rigid_transform(point1,point2,translation_only)
     return [H12,max_inliers_ind]
 
 
 def euclideanDistance(points2, points2Tag):
-    euclideanDist = np.zeros(len(points2))
-    num_points = np.arange(len(points2))
-    euclideanDist[num_points] = np.power(np.linalg.norm(points2[:,num_points] - points2Tag[:,num_points]),2)
+    """
+    using this function in order to calculate the the euclidean distance between the original points (points2) and the
+    estimated points (points2Tag).
+    :param points2: the original set of points
+    :param points2Tag: the estimated set of points, got after applying apply_homography() on points1 and H12.
+    :return: an array where the i'th element represents the absolute distance between points2[i] and points2Tag[i]
+    """
+    euclideanDist = np.linalg.norm(points2 - points2Tag,axis=1)**2
     return euclideanDist
 
 def plotAssistant(vec_x1, vec_x2, vec_y1, vec_y2, n):
@@ -235,7 +265,6 @@ def display_matches(im1, im2, points1, points2, inliers):
     outliers1,outliers2 = points1[np.setdiff1d(np.arange(len(points1)), inliers)],\
                           points2[np.setdiff1d(np.arange(len(points1)), inliers)]
 
-
     # Draw the inliers:
     plotAssistant(inliers1_x,inliers2_x,inliers1_y,inliers2_y, len(inliers))
 
@@ -251,7 +280,6 @@ def _get_Inliers(inliers1, inliers2):
     inliers2_y = inliers2[:, 1]
     return inliers1_x, inliers1_y, inliers2_x, inliers2_y
 
-
 def accumulate_homographies(H_succesive, m):
     """
     Convert a list of succesive homographies to a
@@ -264,8 +292,24 @@ def accumulate_homographies(H_succesive, m):
     :return: A list of M 3x3 homography matrices,
       where H2m[i] transforms points from coordinate system i to coordinate system m
     """
-    pass
 
+    H2m = [0 for _ in range(len(H_succesive)+1)]
+    H2m[m] = np.eye(3)
+    toStartMat,toEndMat = np.eye(3),np.eye(3)
+    # Compute the H matrices from m-1 down to 0:
+    for i in range(m-1,-1,-1):
+        toStartMat = toStartMat @ H_succesive[i]
+        # Normalize the matrix such that the z-coord whould be equal to 1:
+        H2m[i] = toStartMat / toStartMat[2,2]
+
+    # Compute the H matrices from m+1 up to M-1:
+    for i in range(m,len(H_succesive)):
+        toEndMat = toEndMat @ np.linalg.inv(H_succesive[i])
+        H2m[i+1] = toEndMat / toEndMat[2,2]
+
+    return H2m
+
+# Todo
 def compute_bounding_box(homography, w, h):
     """
     computes bounding box of warped image under homography, without actually warping the image
@@ -277,7 +321,7 @@ def compute_bounding_box(homography, w, h):
     """
     pass
 
-
+#TODO
 def warp_channel(image, homography):
     """
     Warps a 2D image with a given homography.
@@ -422,9 +466,9 @@ class PanoramicVideoGenerator:
         # Extract feature point locations and descriptors.
         points_and_descriptors = []
         for file in self.files:
-            image = sol4_utils.read_image(file, 1)
+            image = read_image(file, 1)
             self.h, self.w = image.shape
-            pyramid, _ = sol4_utils.build_gaussian_pyramid(image, 3, 7)
+            pyramid, _ = build_gaussian_pyramid(image, 3, 7)
             points_and_descriptors.append(find_features(pyramid))
 
         # Compute homographies between successive pairs of images.
@@ -452,15 +496,15 @@ class PanoramicVideoGenerator:
         self.frames_for_panoramas = filter_homographies_with_translation(self.homographies, minimum_right_translation=5)
         self.homographies = self.homographies[self.frames_for_panoramas]
 
-        def generate_panoramic_images(self, number_of_panoramas):
-            """
-            combine slices from input images to panoramas.
-            :param number_of_panoramas: how many different slices to take from each input image
-            """
-            if self.bonus:
-                self.generate_panoramic_images_bonus(number_of_panoramas)
-            else:
-                self.generate_panoramic_images_normal(number_of_panoramas)
+    def generate_panoramic_images(self, number_of_panoramas):
+        """
+        combine slices from input images to panoramas.
+        :param number_of_panoramas: how many different slices to take from each input image
+        """
+        if self.bonus:
+            self.generate_panoramic_images_bonus(number_of_panoramas)
+        else:
+            self.generate_panoramic_images_normal(number_of_panoramas)
 
     def generate_panoramic_images_normal(self, number_of_panoramas):
         """
@@ -502,7 +546,7 @@ class PanoramicVideoGenerator:
         self.panoramas = np.zeros((number_of_panoramas, panorama_size[1], panorama_size[0], 3), dtype=np.float64)
         for i, frame_index in enumerate(self.frames_for_panoramas):
             # warp every input image once, and populate all panoramas
-            image = sol4_utils.read_image(self.files[frame_index], 2)
+            image = read_image(self.files[frame_index], 2)
             warped_image = warp_image(image, self.homographies[i])
             x_offset, y_offset = self.bounding_boxes[i][0].astype(np.int)
             y_bottom = y_offset + warped_image.shape[0]
@@ -673,7 +717,6 @@ def build_laplacian_pyramid(im, max_levels, filter_size):
 
 
 
-
 def read_image(filename, representation):
     """
     filename - the filename of an image on disk (could be grayscale or RGB).
@@ -755,7 +798,30 @@ def pyramid_blending(im1, im2, mask, max_levels, filter_size_im, filter_size_mas
         resImg = laplacian_to_image(L_c, filter_vec, np.ones(max_levels))
 
     return np.clip(resImg,0,1)
-
-if __name__ == '__main__':
-    ## Testing the functions:
-    PanoramicVideoGenerator()
+#
+# if __name__ == '__main__':
+#     #
+#     # # x = np.array([[1,1,1,1],[2,2,2,2]])
+#     # x = np.eye(3)
+#     # y = np.concatenate((x,np.ones((3,1)).T))
+#     # print(y)
+#     # # ## Testing the functions:
+#     is_bonus = False
+#     experiments = ['iguazu.mp4', 'boat.mp4']
+#
+#     for experiment in experiments:
+#         exp_no_ext = experiment.split('.')[0]
+#         os.system('mkdir dump')
+#         os.system(('mkdir ' + str(os.path.join('dump', '%s'))) % exp_no_ext)
+#         os.system(
+#             ('ffmpeg -i ' + str(os.path.join('videos', '%s ')) + str(os.path.join('dump', '%s', '%s%%03d.jpg'))) % (
+#             experiment, exp_no_ext, exp_no_ext))
+#
+#         s = time.time()
+#         panorama_generator = PanoramicVideoGenerator(os.path.join('dump', '%s') % exp_no_ext, exp_no_ext, 2100,
+#                                                           bonus=is_bonus)
+#         panorama_generator.align_images(translation_only='boat' in experiment)
+#         panorama_generator.generate_panoramic_images(9)
+#         print(' time for %s: %.1f' % (exp_no_ext, time.time() - s))
+#
+#         panorama_generator.save_panoramas_to_video()
