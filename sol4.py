@@ -253,7 +253,7 @@ def display_matches(im1, im2, points1, points2, inliers):
     :param pos2: An aray shape (N,2), containing N rows of [x,y] coordinates of matched points in im2.
     :param inliers: An array with shape (S,) of inlier matches.
     """
-    stacked_image = np.hstack(im1, im2)
+    stacked_image = np.hstack((im1, im2))
     plt.imshow(stacked_image,cmap='gray')
 
     # get the inlier matches from each image:
@@ -334,7 +334,6 @@ def compute_bounding_box(homography, w, h):
     box_corners = [[min_x, min_y],[max_x,max_y]]
     return np.array(box_corners).astype(np.int)
 
-# Todo
 def warp_channel(image, homography):
     """
     Warps a 2D image with a given homography.
@@ -342,7 +341,20 @@ def warp_channel(image, homography):
     :param homography: homograhpy.
     :return: A 2d warped image.
     """
-    pass
+    # Set the boundaries for the warped image:
+    bounding_box = compute_bounding_box(homography,image.shape[1],image.shape[0])
+    min_x,max_y,max_x,min_y = bounding_box[0][0], bounding_box[1][1], bounding_box[1][0],bounding_box[0][1]
+    x,y = np.meshgrid(np.arange(min_x,max_x+1), np.arange(min_y,max_y+1))
+    inv_homography = np.linalg.inv(homography)
+    # get the x,y arrays to be stacked as (x_i, y_i) in a sequence called pos:
+    pos = np.stack([x,y], axis=2)
+    # Apply homography with the inv_homography matrix inorder to get the indices with respect to frame i:
+    frame_i_coords = apply_homography(pos.reshape(pos.shape[0]*pos.shape[1],2), inv_homography).T
+    # Rehape it back to x coordinates and y coordinates to pass onto the map_coordinates function:
+    frame_i_coords = np.flip(frame_i_coords, axis=0)
+    # interpolate the coordinates we got to the new coordinates
+    new_coords = map_coordinates(image,frame_i_coords,order=1,prefilter=False).reshape(x.shape)
+    return new_coords
 
 
 def warp_image(image, homography):
@@ -811,30 +823,30 @@ def pyramid_blending(im1, im2, mask, max_levels, filter_size_im, filter_size_mas
         resImg = laplacian_to_image(L_c, filter_vec, np.ones(max_levels))
 
     return np.clip(resImg,0,1)
-#
-# if __name__ == '__main__':
-#     #
-#     # # x = np.array([[1,1,1,1],[2,2,2,2]])
-#     # x = np.eye(3)
-#     # y = np.concatenate((x,np.ones((3,1)).T))
-#     # print(y)
-#     # # ## Testing the functions:
-#     is_bonus = False
-#     experiments = ['iguazu.mp4', 'boat.mp4']
-#
-#     for experiment in experiments:
-#         exp_no_ext = experiment.split('.')[0]
-#         os.system('mkdir dump')
-#         os.system(('mkdir ' + str(os.path.join('dump', '%s'))) % exp_no_ext)
-#         os.system(
-#             ('ffmpeg -i ' + str(os.path.join('videos', '%s ')) + str(os.path.join('dump', '%s', '%s%%03d.jpg'))) % (
-#             experiment, exp_no_ext, exp_no_ext))
-#
-#         s = time.time()
-#         panorama_generator = PanoramicVideoGenerator(os.path.join('dump', '%s') % exp_no_ext, exp_no_ext, 2100,
-#                                                           bonus=is_bonus)
-#         panorama_generator.align_images(translation_only='boat' in experiment)
-#         panorama_generator.generate_panoramic_images(9)
-#         print(' time for %s: %.1f' % (exp_no_ext, time.time() - s))
-#
-#         panorama_generator.save_panoramas_to_video()
+
+if __name__ == '__main__':
+    #
+    # # x = np.array([[1,1,1,1],[2,2,2,2]])
+    # x = np.eye(3)
+    # y = np.concatenate((x,np.ones((3,1)).T))
+    # print(y)
+    # # ## Testing the functions:
+    is_bonus = False
+    experiments = ['iguazu.mp4', 'boat.mp4']
+
+    for experiment in experiments:
+        exp_no_ext = experiment.split('.')[0]
+        os.system('mkdir dump')
+        os.system(('mkdir ' + str(os.path.join('dump', '%s'))) % exp_no_ext)
+        os.system(
+            ('ffmpeg -i ' + str(os.path.join('videos', '%s ')) + str(os.path.join('dump', '%s', '%s%%03d.jpg'))) % (
+            experiment, exp_no_ext, exp_no_ext))
+
+        s = time.time()
+        panorama_generator = PanoramicVideoGenerator(os.path.join('dump', '%s') % exp_no_ext, exp_no_ext, 2100,
+                                                          bonus=is_bonus)
+        panorama_generator.align_images(translation_only='boat' in experiment)
+        panorama_generator.generate_panoramic_images(9)
+        print(' time for %s: %.1f' % (exp_no_ext, time.time() - s))
+
+        panorama_generator.save_panoramas_to_video()
