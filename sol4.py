@@ -238,10 +238,18 @@ def euclideanDistance(points2, points2Tag):
     euclideanDist = np.linalg.norm(points2 - points2Tag,axis=1)**2
     return euclideanDist
 
-def plotAssistant(vec_x1, vec_x2, vec_y1, vec_y2, n):
+def plotAssistant(vec_x1, vec_x2, vec_y1, vec_y2, n, is_inlier=True):
     """Helper function for plotting the layers of matches between two consecutive frames"""
-    for iter in range(n):
-        plt.plot([vec_x1[iter:iter+2],vec_x2[iter:iter+2]],[vec_y1[iter:iter+2],vec_y2[iter:iter+2]])
+    if is_inlier:
+        for iter in range(n):
+            plt.plot([vec_x1[iter:iter+2],vec_x2[iter:iter+2]],[vec_y1[iter:iter+2],vec_y2[iter:iter+2]],
+                     mfc='r', c='y',lw= .4, ms=10,
+                     marker='o')
+    else:
+        for iter in range(n):
+            plt.plot([vec_x1[iter:iter+2],vec_x2[iter:iter+2]],[vec_y1[iter:iter+2],vec_y2[iter:iter+2]],
+                     mfc='r', c='b',lw= .4, ms=10,
+                     marker='o')
     return
 
 def display_matches(im1, im2, points1, points2, inliers):
@@ -255,20 +263,15 @@ def display_matches(im1, im2, points1, points2, inliers):
     """
     stacked_image = np.hstack((im1, im2))
     plt.imshow(stacked_image,cmap='gray')
-
     # get the inlier matches from each image:
     inliers1,inliers2 = points1[inliers],points2[inliers]
-
     inliers1_x, inliers1_y, inliers2_x, inliers2_y = _get_Inliers(inliers1, inliers2)
-
     outliers1,outliers2 = points1[np.setdiff1d(np.arange(len(points1)), inliers)],\
                           points2[np.setdiff1d(np.arange(len(points1)), inliers)]
-
     # Draw the inliers:
     plotAssistant(inliers1_x,inliers2_x,inliers1_y,inliers2_y, len(inliers))
-
     # Draw the outliers:
-    plotAssistant(outliers1[:,0], outliers2[:,0], outliers1[:,1], outliers2[:,1], len(outliers1))
+    plotAssistant(outliers1[:,0], outliers2[:,0], outliers1[:,1], outliers2[:,1], len(outliers1), is_inlier=False)
     plt.show()
 
 
