@@ -1,10 +1,7 @@
 import time
 
 import numpy as np
-import scipy
-import scipy.signal as signal
 import matplotlib.pyplot as plt
-import skimage.color
 import scipy.ndimage as scimage
 from scipy.ndimage.morphology import generate_binary_structure
 from scipy.ndimage.filters import maximum_filter
@@ -276,6 +273,12 @@ def display_matches(im1, im2, points1, points2, inliers):
 
 
 def _get_Inliers(inliers1, inliers2):
+    """
+    helper function used to get the inliers of each photo, given its inliers data
+    :param inliers1:
+    :param inliers2:
+    :return:
+    """
     inliers1_x = inliers1[:, 0]
     inliers1_y = inliers1[:, 1]
     inliers2_x = inliers2[:, 0]
@@ -494,9 +497,9 @@ class PanoramicVideoGenerator:
         # Extract feature point locations and descriptors.
         points_and_descriptors = []
         for file in self.files:
-            image = read_image(file, 1)
+            image = sol4_utils.read_image(file, 1)
             self.h, self.w = image.shape
-            pyramid, _ = build_gaussian_pyramid(image, 3, 7)
+            pyramid, _ = sol4_utils.build_gaussian_pyramid(image, 3, 7)
             points_and_descriptors.append(find_features(pyramid))
 
         # Compute homographies between successive pairs of images.
@@ -574,7 +577,7 @@ class PanoramicVideoGenerator:
         self.panoramas = np.zeros((number_of_panoramas, panorama_size[1], panorama_size[0], 3), dtype=np.float64)
         for i, frame_index in enumerate(self.frames_for_panoramas):
             # warp every input image once, and populate all panoramas
-            image = read_image(self.files[frame_index], 2)
+            image = sol4_utils.read_image(self.files[frame_index], 2)
             warped_image = warp_image(image, self.homographies[i])
             x_offset, y_offset = self.bounding_boxes[i][0].astype(np.int)
             y_bottom = y_offset + warped_image.shape[0]
@@ -599,7 +602,64 @@ class PanoramicVideoGenerator:
         The bonus
         :param number_of_panoramas: how many different slices to take from each input image
         """
-        pass
+        """
+          combine slices from input images to panoramas.
+          :param number_of_panoramas: how many different slices to take from each input image
+          """
+        assert self.homographies is not None
+
+        # compute bounding boxes of all warped input images in the coordinate system of the middle image (as given by the homographies)
+        self.bounding_boxes = np.zeros((self.frames_for_panoramas.size, 2, 2))
+        for i in range(self.frames_for_panoramas.size):
+            self.bounding_boxes[i] = compute_bounding_box(self.homographies[i], self.w, self.h)
+
+        # change our reference coordinate system to the panoramas
+        # all panoramas share the same coordinate system
+        global_offset = np.min(self.bounding_boxes, axis=(0, 1))
+        self.bounding_boxes -= global_offset
+
+        slice_centers = np.linspace(0, self.w, number_of_panoramas + 2, endpoint=True, dtype=np.int)[1:-1]
+        warped_slice_centers = np.zeros((number_of_panoramas, self.frames_for_panoramas.size))
+        # every slice is a different panorama, it indicates the slices of the input images from which the panorama
+        # will be concatenated
+        for i in range(slice_centers.size):
+            slice_center_2d = np.array([slice_centers[i], self.h // 2])[None, :]
+            # homography warps the slice center to the coordinate system of the middle image
+            warped_centers = [apply_homography(slice_center_2d, h) for h in self.homographies]
+            # we are actually only interested in the x coordinate of each slice center in the panoramas' coordinate system
+            warped_slice_centers[i] = np.array(warped_centers)[:, :, 0].squeeze() - global_offset[0]
+
+        panorama_size = np.max(self.bounding_boxes, axis=(0, 1)).astype(np.int) + 1
+
+        # boundary between input images in the panorama
+        x_strip_boundary = ((warped_slice_centers[:, :-1] + warped_slice_centers[:, 1:]) / 2)
+        x_strip_boundary = np.hstack([np.zeros((number_of_panoramas, 1)),
+                                      x_strip_boundary,
+                                      np.ones((number_of_panoramas, 1)) * panorama_size[0]])
+        x_strip_boundary = x_strip_boundary.round().astype(np.int)
+
+        self.panoramas = np.zeros((number_of_panoramas, panorama_size[1], panorama_size[0], 3), dtype=np.float64)
+        for i, frame_index in enumerate(self.frames_for_panoramas):
+            # warp every input image once, and populate all panoramas
+            image = sol4_utils.read_image(self.files[frame_index], 2)
+            warped_image = warp_image(image, self.homographies[i])
+            x_offset, y_offset = self.bounding_boxes[i][0].astype(np.int)
+            y_bottom = y_offset + warped_image.shape[0]
+
+            for panorama_index in range(number_of_panoramas):
+                # take strip of warped image and paste to current panorama
+                boundaries = x_strip_boundary[panorama_index, i:i + 2]
+                image_strip = warped_image[:, boundaries[0] - x_offset: boundaries[1] - x_offset]
+                x_end = boundaries[0] + image_strip.shape[1]
+                self.panoramas[panorama_index, y_offset:y_bottom, boundaries[0]:x_end] = image_strip
+
+        # crop out areas not recorded from enough angles
+        # assert will fail if there is overlap in field of view between the left most image and the right most image
+        crop_left = int(self.bounding_boxes[0][1, 0])
+        crop_right = int(self.bounding_boxes[-1][0, 0])
+        assert crop_left < crop_right, 'for testing your code with a few images do not crop.'
+        print(crop_left, crop_right)
+        self.panoramas = self.panoramas[:, :, crop_left:crop_right, :]
 
     def save_panoramas_to_video(self):
         assert self.panoramas is not None
@@ -626,230 +686,3 @@ class PanoramicVideoGenerator:
         plt.show()
 
 
-################################
-### Helper functions section ###
-################################
-def _buildGaussianVec(sizeOfVector):
-    """
-    Helper function to generate the gaussian vector with the size of the sizeOfVector
-    """
-    if sizeOfVector <= 2:
-        return np.array([np.ones(sizeOfVector)])
-    unitVec = np.ones(2)
-    resultVec = np.ones(2)
-    for i in range(sizeOfVector - 2):
-        resultVec = scipy.signal.convolve(resultVec, unitVec)
-    return np.array(resultVec/np.sum(resultVec)).reshape(1, sizeOfVector)
-
-
-
-def _reduceImage(image, filter_vec):
-    """
-    a simple function to reduce the image size after blurring it
-    :param image: image to reduce
-    :return: reduced image
-    """
-    # Step 1: Blur the image:
-    blurredImage = _blurImage(filter_vec, image)
-
-    # Step 2: Sub-sample every 2nd pixel of the image, every 2nd row, from the blurred image:
-    reducedImage = blurredImage[::EVEN_PIXELS,::EVEN_PIXELS]
-    return reducedImage
-
-
-def _blurImage(filter_vec, image):
-    #Step 1: blur the rows:
-    blurredImage = scipy.ndimage.filters.convolve(image,filter_vec)
-
-    # Step 2: complete the blurred image:
-    blurredImage = scipy.ndimage.filters.convolve(blurredImage, filter_vec.T)
-
-    return blurredImage
-
-
-def _expandImage(image, filter_vec):
-    """
-
-    :param image:  image to expand
-    :param filter_vec:
-    :return:
-    """
-    # Step 1: Expand the image using zeros on odd pixels:
-    expandedImage = np.zeros((image.shape[0]*2,image.shape[1]*2))
-    expandedImage[::EVEN_PIXELS,::EVEN_PIXELS] = image
-
-    # Step 2: Blur the expanded image:
-    blurredExpandedImage = _blurImage(filter_vec*2,expandedImage)
-    return blurredExpandedImage
-
-
-def _max_levels_calc(max_levels, im):
-    """
-    Simple helper function to calculate the maximum levels of the pyramid, given the
-    restrictions on the assignment's pdf
-    :return: the correct maximum levels of the pyramid we will calculate
-    """
-    widthLayers = np.log2(im.shape[1]/16)
-    heightLayers = np.log2(im.shape[0]/16)
-    max_levels = min(max_levels, int(widthLayers) + 1,
-        int(heightLayers) + 1)
-    return max_levels
-
-def build_gaussian_pyramid(im, max_levels, filter_size):
-    """
-
-    :param im: a grayscale image with double values in [0, 1] (e.g. the output of ex1’s read_image with the
-    representation set to 1).
-
-    :param max_levels: the maximal number of levels in the resulting pyramid.
-    :param filter_size: the size of the Gaussian filter (an odd scalar that represents a squared filter)
-                        to be used in constructing the pyramid filter
-                        (e.g for filter_size = 3 you should get [0.25, 0.5, 0.25]). You may assume the filter size will be >=2.
-    :return:
-    """
-
-    pyr = []
-    gaussian_vec = _buildGaussianVec(filter_size)
-    max_levels = _max_levels_calc(max_levels, im)
-    tmp = im
-
-    for i in range(max_levels):
-        pyr.append(tmp)
-        tmp = _reduceImage(np.copy(tmp), gaussian_vec)
-
-    return pyr, gaussian_vec
-
-
-
-def build_laplacian_pyramid(im, max_levels, filter_size):
-    """
-
-    :param im: a grayscale image with double values in [0, 1] (e.g. the output of ex1’s read_image with the
-    representation set to 1).
-    :param max_levels: the maximal number of levels1 in the resulting pyramid.
-    :param filter_size:
-    :return:
-    """
-    #Step 1: calculate the gaussian pyramid so we can use it for next calculations:
-    gauPyramid,filter_vec = build_gaussian_pyramid(im, max_levels, filter_size )
-
-    #Step 2: Initialize the pyramid and add to each of its levels the correct value (using the formula we learnd):
-    pyr = []
-    for i in range(len(gauPyramid)-1):
-        pyr.append(gauPyramid[i] - _expandImage(gauPyramid[i+1], filter_vec))
-
-    #Step 3: add the last level of the pyramid:
-    pyr.append(gauPyramid[-1])
-
-    return pyr, filter_vec
-
-
-
-def read_image(filename, representation):
-    """
-    filename - the filename of an image on disk (could be grayscale or RGB).
-    representation - representation code, either 1 or 2 defining whether the output should be a:
-    grayscale image (1)
-    or an RGB image (2).
-    NOTE: If the input image is grayscale, we won’t call it with represen- tation = 2.
-    :param filename: String - the address of the image we want to read
-    :param representation: Int - as described above
-    :return: an image in the correct representation
-    """
-    if representation != RGB and representation != GRAY_SCALE:
-        return "Invalid Input. You may use representation <- {1, 2}"
-    tempImage = plt.imread(filename)[:, :, :3]
-    resultImage = np.array(tempImage)
-
-    if representation == GRAY_SCALE:
-        resultImage = skimage.color.rgb2gray(tempImage)
-    elif representation == RGB:
-        resultImage = tempImage
-    if resultImage.max() > 1:
-        resultImage = resultImage/256
-
-    return resultImage.astype(np.float64)
-
-
-
-def laplacian_to_image(lpyr, filter_vec, coeff):
-    """
-    :param lpyr: laplacian pyramid
-    :param filter_vec: filter vector
-    :param coeff: python array of coefficients
-    :return: reconstructed image from the lpyr
-    """
-    #Step 1: initialize the image we want to return:
-    resultImage = lpyr[-1]*coeff[-1]
-
-    #Step 2: iterate through all the levels of the pyramid and reconstruct an image out of it:
-    for i in range(2, len(lpyr) + 1):
-        resultImage = coeff[-i]*lpyr[-i] + _expandImage(resultImage,filter_vec)
-
-    return resultImage
-
-def pyramid_blending(im1, im2, mask, max_levels, filter_size_im, filter_size_mask):
-    """
-
-    :param im1,im2: are two input grayscale images to be blended.
-    :param mask:is a boolean (i.e. dtype == np.bool) mask containing
-                True and False representing which parts of im1 and im2 should appear in the resulting im_blend.
-                Note that a value of True corresponds to 1, and False corresponds to 0.
-    :param max_levels: is the max_levels parameter you should use when generating the Gaussian and Laplacian pyramids.
-    :param filter_size_im:  is the size of the Gaussian filter (an odd scalar that represents a squared filter) which
-                            defining the filter used in the construction of the Laplacian pyramids of im1 and im2.
-    :param filter_size_mask: is the size of the Gaussian filter(an odd scalar that represents a squared filter)
-                             which defining the filter used in the construction of the Gaussian pyramid of mask.
-    :return: Blended image
-    """
-    resImg = np.zeros(im1.shape)
-    mask = mask.astype(np.float64)
-    # Build Gaussian pyramid for the mask:
-    G, filter_vec = build_gaussian_pyramid(mask, max_levels, filter_size_mask)
-    if len(im1.shape) == RGB_FORMAT:
-        for channel in range(len(im1.shape)):
-            # Build laplacian pyramid for im1 and im2:
-            L_a = build_laplacian_pyramid(im1[:,:,channel],max_levels, filter_size_im)[0]
-            L_b = build_laplacian_pyramid(im2[:,:,channel], max_levels, filter_size_im)[0]
-
-
-            # Build laplacian pyramid using the formula we saw in class:
-            L_c = np.multiply(G,L_a) + np.multiply(np.subtract(1, G),L_b)
-            resImg[:,:,channel] = laplacian_to_image(L_c,filter_vec,np.ones(max_levels))
-    else:
-        # Build laplacian pyramid for im1 and im2:
-        L_a = build_laplacian_pyramid(im1, max_levels, filter_size_im)[0]
-        L_b = build_laplacian_pyramid(im2, max_levels, filter_size_im)[0]
-
-        # Build laplacian pyramid using the formula we saw in class:
-        L_c = np.multiply(G, L_a) + np.multiply(np.subtract(1, G), L_b)
-        resImg = laplacian_to_image(L_c, filter_vec, np.ones(max_levels))
-
-    return np.clip(resImg,0,1)
-
-if __name__ == '__main__':
-    #
-    # # x = np.array([[1,1,1,1],[2,2,2,2]])
-    # x = np.eye(3)
-    # y = np.concatenate((x,np.ones((3,1)).T))
-    # print(y)
-    # # ## Testing the functions:
-    is_bonus = False
-    experiments = ['iguazu.mp4', 'boat.mp4']
-
-    for experiment in experiments:
-        exp_no_ext = experiment.split('.')[0]
-        os.system('mkdir dump')
-        os.system(('mkdir ' + str(os.path.join('dump', '%s'))) % exp_no_ext)
-        os.system(
-            ('ffmpeg -i ' + str(os.path.join('videos', '%s ')) + str(os.path.join('dump', '%s', '%s%%03d.jpg'))) % (
-            experiment, exp_no_ext, exp_no_ext))
-
-        s = time.time()
-        panorama_generator = PanoramicVideoGenerator(os.path.join('dump', '%s') % exp_no_ext, exp_no_ext, 2100,
-                                                          bonus=is_bonus)
-        panorama_generator.align_images(translation_only='boat' in experiment)
-        panorama_generator.generate_panoramic_images(9)
-        print(' time for %s: %.1f' % (exp_no_ext, time.time() - s))
-
-        panorama_generator.save_panoramas_to_video()
