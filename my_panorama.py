@@ -1,7 +1,7 @@
 import os
 import time
 
-from sol4 import PanoramicVideoGenerator
+from panorama_stitching import PanoramicVideoGenerator
 
 
 def main():

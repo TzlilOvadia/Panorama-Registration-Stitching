@@ -10,6 +10,9 @@ RGB_FORMAT = 3
 EVEN_PIXELS = 2
 D_X = np.array([1, 0, -1]).reshape(1,3)
 D_Y = D_X.T
+
+
+
 def _buildGaussianVec(sizeOfVector):
     """
     Helper function to generate the gaussian vector with the size of the sizeOfVector
