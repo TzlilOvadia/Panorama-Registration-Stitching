@@ -7,7 +7,8 @@ from panorama_stitching import PanoramicVideoGenerator
 def main():
     inpt = input("Hello and welcome! \nIf you wish to run the test example, press enter to continue.\n"
           "else, insert the filename you wish to run the test on:\n")
-    if inpt == '\n':
+    print(f'inpt is {inpt} !!')
+    if inpt == '':
         experiments = ['home.mp4', 'iguazu.mp4', 'boat.mp4']
     else:
         experiments = [inpt]
