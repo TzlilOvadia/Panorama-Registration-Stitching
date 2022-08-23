@@ -21,7 +21,6 @@
     <li>
       <a href="#getting-started">Getting Started</a>
       <ul>
-        <li><a href="#Setup">Setup Project's environment</a></li>
         <li><a href="#Creating Panoramic Images">Creating Panoramic Images</a></li>
       </ul>
     </li>
@@ -47,7 +46,6 @@ and the residual parallax, as well as other motions will become visible.
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 ## Getting Started
-## Setup project's environment:
 
 1. clone the project into your computer
 2. make sure packages are installed using 'requirements.txt'
