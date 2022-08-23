@@ -48,11 +48,9 @@ and the residual parallax, as well as other motions will become visible.
 
 ## Getting Started
 ## Setup project's environment:
-### step 1
-clone the project into your computer
 
-### step 2:
-make sure packages are installed using requirements.txt
+1. clone the project into your computer
+2. make sure packages are installed using 'requirements.txt'
 
 ## Create Panoramic image using the test videos:
 In order to test the algorithm's performance, and observe its result,
@@ -75,13 +73,13 @@ Result for 'home.mp4':
 ## You can do it!
 I guess that you want to try it using your own video, right? to do so, follow the instructions below:
 
-### Step 1 - How to record the video:
+1. How to record the video:
 Reminder: this algorithm is working under the assumption that every two overlapping frames can be related to each other by applying a rigid transformation, i.e, transformation which includes only rotation and translation.
 Hence, in order to make this work, you need to take a video, using only a rotation and\or translation movements while recording.
 another thing to pay attention to is the length of the video - take your time, and let the video be at least as long as the provided ones
 Lastly, make sure that you don't move too fast, so the algorithm can match points of overlapping frames correctly.
 
-### Step 2 - Feeding it into the program:
+2. Feeding it into the program:
 - Copy the video into a directory called 'videos' which is located in the project's main directory.
 - In the my_panorama file, you'll find 
 
