@@ -82,6 +82,7 @@ Lastly, make sure that you don't move too fast, so the algorithm can match point
 - In the my_panorama file, you'll find 
 
 
+Hope you find it useful!
 
 <!-- MARKDOWN LINKS & IMAGES -->
 
