@@ -1,4 +1,4 @@
-### Panoramic Image Stitching and Registration
+# Panoramic Image Stitching and Registration
 
 <!-- PROJECT SHIELDS -->
 <!--
